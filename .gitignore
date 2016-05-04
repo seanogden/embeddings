@@ -1,4 +1,4 @@
-code5/build/*
-code5/dist/*
-code5/lib/*
-data5/*
+build/*
+dist/*
+lib/*
+data/*
