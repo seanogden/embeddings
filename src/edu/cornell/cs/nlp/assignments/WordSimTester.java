@@ -79,20 +79,29 @@ public class WordSimTester {
 			final HashMap<String, Integer> contentWordVocab = getWordNetVocab(
 					wordNetPath);
             
+            int embeddingSize = 0;
+            
             if (argMap.containsKey("-baseline")) {
                 System.out.println("Training embeddings on " + dataPath + " with baseline...");
                 embeddings = getEmbeddings(dataPath, contentWordVocab, targetVocab);
+                embeddingSize = contentWordVocab.size();
             }
-            else {
+            else if (argMap.containsKey("-baseline2")) {
                 System.out.println("Training embeddings on " + dataPath + " with baseline2...");
                 embeddings = getEmbeddings2(dataPath, contentWordVocab, targetVocab);
+                embeddingSize = contentWordVocab.size();
+            }
+            else {
+                System.out.println("Training embeddings on " + dataPath + " with conll...");
+                embeddings = getConllEmbeddings(dataPath, contentWordVocab, targetVocab);
+                embeddingSize = 2;
             }
 
 			// Keep only the words that are needed.
 			System.out
 					.println("Writing embeddings to " + embeddingPath + " ...");
 			embeddings = reduceVocabulary(embeddings, targetVocab);
-			writeEmbeddings(embeddings, embeddingPath, contentWordVocab.size());
+			writeEmbeddings(embeddings, embeddingPath, embeddingSize);
 		} else {
 			// Read in embeddings.
 			System.out.println("Loading embeddings ...");
@@ -229,6 +238,39 @@ public class WordSimTester {
                             = embeddingMatrix.get(wordi)[contentWordId] + score;
                         }
                     }
+                }
+            }
+        }
+        
+        return embeddingMatrix;
+    }
+    
+    /**
+     * considers Conll values
+     *
+     * @param data_path
+     * @param target_vocab
+     * @param embedding_map
+     * @return
+     */
+    private static HashMap<String, float[]> getConllEmbeddings(String dataPath,
+                                                           HashMap<String, Integer> contentVocab, Set<String> targetVocab) {
+        
+        final HashMap<String, float[]> embeddingMatrix = new HashMap<String, float[]>();
+        for (final String target_word : targetVocab) {
+            embeddingMatrix.put(target_word, new float[2]);
+        }
+        
+        final Collection<List<Conll>> conllCollection = ConllCollection.Reader
+        .readConllCollection(dataPath);
+        
+        for (final List<Conll> conlls : conllCollection) {
+            for (final Conll conll : conlls) {
+                if (targetVocab.contains(conll.word)) {
+                    embeddingMatrix.get(conll.word)[0] =
+                    embeddingMatrix.get(conll.word)[0] + conll.index;
+                    embeddingMatrix.get(conll.word)[1] =
+                    embeddingMatrix.get(conll.word)[1] + conll.head;
                 }
             }
         }
