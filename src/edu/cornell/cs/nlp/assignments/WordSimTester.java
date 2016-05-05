@@ -78,9 +78,15 @@ public class WordSimTester {
 			}
 			final HashMap<String, Integer> contentWordVocab = getWordNetVocab(
 					wordNetPath);
-
-			System.out.println("Training embeddings on " + dataPath + " ...");
-			embeddings = getEmbeddings(dataPath, contentWordVocab, targetVocab);
+            
+            if (argMap.containsKey("-baseline")) {
+                System.out.println("Training embeddings on " + dataPath + " with baseline...");
+                embeddings = getEmbeddings(dataPath, contentWordVocab, targetVocab);
+            }
+            else {
+                System.out.println("Training embeddings on " + dataPath + " with baseline2...");
+                embeddings = getEmbeddings2(dataPath, contentWordVocab, targetVocab);
+            }
 
 			// Keep only the words that are needed.
 			System.out
@@ -187,6 +193,48 @@ public class WordSimTester {
 
 		return embeddingMatrix;
 	}
+
+    /**
+     * Modification from the above model where
+     * the distance between two words in a sentence is also considered.
+     *
+     * @param data_path
+     * @param target_vocab
+     * @param embedding_map
+     * @return
+     */
+    private static HashMap<String, float[]> getEmbeddings2(String dataPath,
+                                                          HashMap<String, Integer> contentVocab, Set<String> targetVocab) {
+        
+        final HashMap<String, float[]> embeddingMatrix = new HashMap<String, float[]>();
+        for (final String target_word : targetVocab) {
+            embeddingMatrix.put(target_word, new float[contentVocab.size()]);
+        }
+        
+        final Collection<List<String>> sentenceCollection = SentenceCollection.Reader
+        .readSentenceCollection(dataPath);
+        
+        for (final List<String> sentence : sentenceCollection) {
+            final int len = sentence.size();
+            for (int i = 0; i < len; i++) {
+                final String wordi = sentence.get(i);
+                if (targetVocab.contains(wordi)) {
+                    for (int j = 0; j < len; j++) {
+                        final String wordj = sentence.get(j);
+                        if (contentVocab.containsKey(wordj)) {
+                            final int contentWordId = contentVocab.get(wordj);
+                            //final float score = (float) ((len - Math.abs(i - j) + 0.0) / len);
+                            final float score = (float) (1.0 / (Math.abs(i - j) + 1.0));
+                            embeddingMatrix.get(wordi)[contentWordId]
+                            = embeddingMatrix.get(wordi)[contentWordId] + score;
+                        }
+                    }
+                }
+            }
+        }
+        
+        return embeddingMatrix;
+    }
 
 	/**
 	 * Read the core WordNet senses and map each to a unique integer. Used by
