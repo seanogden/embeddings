@@ -4,6 +4,7 @@ import java.io.BufferedReader;
 import java.io.BufferedWriter;
 import java.io.FileReader;
 import java.io.FileWriter;
+import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collection;
 import java.util.HashMap;
@@ -18,6 +19,7 @@ import org.apache.commons.math3.stat.ranking.NaNStrategy;
 import org.apache.commons.math3.stat.ranking.NaturalRanking;
 
 import edu.cornell.cs.nlp.assignments.util.CommandLineUtils;
+import edu.cornell.cs.nlp.assignments.util.HashId;
 import edu.cornell.cs.nlp.assignments.util.Pair;
 
 public class WordSimTester {
@@ -64,42 +66,44 @@ public class WordSimTester {
 			} else {
 				dataPath = argMap.get("-trainingdata");
 			}
-
-			// Since this simple approach does not do dimensionality reduction
-			// on the co-occurrence vectors, we instead control the size of the
-			// vectors by only counting co-occurrence with core WordNet senses.
-			String wordNetPath = "";
-			if (!argMap.containsKey("-wordnetdata")) {
-				System.out.println(
-						"-wordnetdata flag required with -trainandeval");
-				System.exit(0);
-			} else {
-				wordNetPath = argMap.get("-wordnetdata");
-			}
-			final HashMap<String, Integer> contentWordVocab = getWordNetVocab(
-					wordNetPath);
             
             int embeddingSize = 0;
-            
-            if (argMap.containsKey("-baseline")) {
-                System.out.println("Training embeddings on " + dataPath + " with baseline...");
-                embeddings = getEmbeddings(dataPath, contentWordVocab, targetVocab);
-                embeddingSize = contentWordVocab.size();
-            }
-            else if (argMap.containsKey("-baseline2")) {
-                System.out.println("Training embeddings on " + dataPath + " with baseline2...");
-                embeddings = getEmbeddings2(dataPath, contentWordVocab, targetVocab);
-                embeddingSize = contentWordVocab.size();
+            if (argMap.containsKey("-baseline") || (argMap.containsKey("-baseline2"))) {
+
+                // Since this simple approach does not do dimensionality reduction
+                // on the co-occurrence vectors, we instead control the size of the
+                // vectors by only counting co-occurrence with core WordNet senses.
+                String wordNetPath = "";
+                if (!argMap.containsKey("-wordnetdata")) {
+                    System.out.println(
+                            "-wordnetdata flag required with -baseline or -baseline2");
+                    System.exit(0);
+                } else {
+                    wordNetPath = argMap.get("-wordnetdata");
+                }
+                final HashMap<String, Integer> contentWordVocab = getWordNetVocab(
+                        wordNetPath);
+                
+                if (argMap.containsKey("-baseline")) {
+                    System.out.println("Training embeddings on " + dataPath + " with baseline...");
+                    embeddings = getEmbeddings(dataPath, contentWordVocab, targetVocab);
+                    embeddingSize = contentWordVocab.size();
+                }
+                else {
+                    System.out.println("Training embeddings on " + dataPath + " with baseline2...");
+                    embeddings = getEmbeddings2(dataPath, contentWordVocab, targetVocab);
+                    embeddingSize = contentWordVocab.size();
+                }
             }
             else {
                 System.out.println("Training embeddings on " + dataPath + " with conll...");
-                embeddings = getConllEmbeddings(dataPath, contentWordVocab, targetVocab);
-                embeddingSize = 2;
+                Pair<HashMap<String, float[]>, Integer> pair = getConllEmbeddings(dataPath, targetVocab);
+                embeddings = pair.getFirst();
+                embeddingSize = pair.getSecond();
             }
 
 			// Keep only the words that are needed.
-			System.out
-					.println("Writing embeddings to " + embeddingPath + " ...");
+			System.out.println("Writing embeddings to " + embeddingPath + " ...");
 			embeddings = reduceVocabulary(embeddings, targetVocab);
 			writeEmbeddings(embeddings, embeddingPath, embeddingSize);
 		} else {
@@ -253,29 +257,84 @@ public class WordSimTester {
      * @param embedding_map
      * @return
      */
-    private static HashMap<String, float[]> getConllEmbeddings(String dataPath,
-                                                           HashMap<String, Integer> contentVocab, Set<String> targetVocab) {
+    private static Pair<HashMap<String, float[]>, Integer> getConllEmbeddings(String dataPath, Set<String> targetVocab) {
         
-        final HashMap<String, float[]> embeddingMatrix = new HashMap<String, float[]>();
-        for (final String target_word : targetVocab) {
-            embeddingMatrix.put(target_word, new float[2]);
+        final ArrayList<String> targetVocabList = new ArrayList<String>(targetVocab);
+        final int targetVocabSize = targetVocabList.size();
+        
+        final ArrayList<HashSet<Integer>> contexts = new ArrayList<HashSet<Integer>>();
+        for (int i = 0; i < targetVocabSize; i++) {
+            contexts.add(new HashSet<Integer>());
         }
+        
+        final HashId<String> contextIds = new HashId<String>();
         
         final Collection<List<Conll>> conllCollection = ConllCollection.Reader
         .readConllCollection(dataPath);
         
         for (final List<Conll> conlls : conllCollection) {
-            for (final Conll conll : conlls) {
-                if (targetVocab.contains(conll.word)) {
-                    embeddingMatrix.get(conll.word)[0] =
-                    embeddingMatrix.get(conll.word)[0] + conll.index;
-                    embeddingMatrix.get(conll.word)[1] =
-                    embeddingMatrix.get(conll.word)[1] + conll.head;
+            for (final Conll conlli : conlls) {
+                int wordIndex = targetVocabList.indexOf(conlli.word);
+                if (wordIndex != -1) {
+                    HashSet<Integer> wordContexts = contexts.get(wordIndex);
+                    
+                    // add parent context
+                    String parent;
+                    if (conlli.head == 0) {
+                        parent = "<ROOT>";
+                    } else {
+                        parent = conlls.get(conlli.head - 1).word;
+                    }
+                    //wordContexts.add(contextIds.get(parent));
+                    //wordContexts.add(contextIds.get(conlli.rel + "-1"));
+                    wordContexts.add(contextIds.get(parent + "/" + conlli.rel + "-1"));
+                    
+                    // add children contexts
+                    final HashMap<Integer, String> grandchildren = new HashMap<Integer, String>();
+                    for (final Conll conllj : conlls) {
+                        if (conllj.head == conlli.index) {
+                            if (conllj.rel == "prep") {
+                                grandchildren.put(conllj.index, "prep_" + conllj.word);
+                            }
+                            else {
+                                //wordContexts.add(contextIds.get(conllj.word));
+                                //wordContexts.add(contextIds.get(conllj.rel));
+                                wordContexts.add(contextIds.get(conllj.word + "/" + conllj.rel));
+                            }
+                        }
+                    }
+                    
+                    // add grandchildren contexts
+                    for (final Conll conllj : conlls) {
+                        if (conllj.rel == "pobj") {
+                            String new_rel = grandchildren.remove(conllj.head);
+                            //wordContexts.add(contextIds.get(conllj.word));
+                            //wordContexts.add(contextIds.get(new_rel));
+                            wordContexts.add(contextIds.get(conllj.word + "/" + new_rel));
+                        }
+                    }
+                    assert grandchildren.isEmpty();
                 }
             }
         }
         
-        return embeddingMatrix;
+        final int contextSize = contextIds.size();
+        
+        final HashMap<String, float[]> embeddingMatrix = new HashMap<String, float[]>();
+        for (final String target_word : targetVocab) {
+            embeddingMatrix.put(target_word, new float[contextSize]);
+        }
+        
+        for (int wordIndex = 0; wordIndex < targetVocabSize; wordIndex++) {
+            float[] embedding = new float[contextSize];
+            HashSet<Integer> wordContexts = contexts.get(wordIndex);
+            for (int contextId : wordContexts) {
+                embedding[contextId] = 1;
+            }
+            embeddingMatrix.put(targetVocabList.get(wordIndex), embedding);
+        }
+        
+        return new Pair<HashMap<String, float[]>, Integer>(embeddingMatrix, contextSize);
     }
 
 	/**
