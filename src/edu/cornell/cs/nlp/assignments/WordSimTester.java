@@ -18,6 +18,17 @@ import org.apache.commons.math3.stat.correlation.SpearmansCorrelation;
 import org.apache.commons.math3.stat.ranking.NaNStrategy;
 import org.apache.commons.math3.stat.ranking.NaturalRanking;
 
+import org.apache.commons.math3.optim.nonlinear.scalar.gradient.NonLinearConjugateGradientOptimizer;
+import org.apache.commons.math3.optim.nonlinear.scalar.gradient.NonLinearConjugateGradientOptimizer.Formula;
+import org.apache.commons.math3.optim.SimpleValueChecker;
+import org.apache.commons.math3.optim.PointValuePair;
+import org.apache.commons.math3.analysis.differentiation.DerivativeStructure;
+import org.apache.commons.math3.analysis.differentiation.MultivariateDifferentiableFunction;
+import org.apache.commons.math3.analysis.differentiation.GradientFunction;
+import org.apache.commons.math3.optim.nonlinear.scalar.ObjectiveFunctionGradient;
+import org.apache.commons.math3.optim.nonlinear.scalar.GoalType;
+import org.apache.commons.math3.optim.InitialGuess;
+
 import edu.cornell.cs.nlp.assignments.util.CommandLineUtils;
 import edu.cornell.cs.nlp.assignments.util.HashId;
 import edu.cornell.cs.nlp.assignments.util.Pair;
@@ -111,14 +122,21 @@ public class WordSimTester {
                 embeddings = pair.getFirst();
                 embeddingSize = pair.getSecond();
                 
-                ObjectiveFunction objfun = new ObjectiveFunction(embeddings);
                 double[] initialweights = new double[embeddingSize];
                 for (int i = 0; i < embeddingSize; i++) {
                     initialweights[i] = 1.0;
                 }
                 
                 // MAXIMIZE
-                double[] weights = initialweights;
+                NonLinearConjugateGradientOptimizer.Formula F = NonLinearConjugateGradientOptimizer.Formula.FLETCHER_REEVES;
+                SimpleValueChecker SVC = new SimpleValueChecker(0.1, -0.1);
+                NonLinearConjugateGradientOptimizer NLCGO = new NonLinearConjugateGradientOptimizer(F, SVC);
+                GradientFunction GF = new GradientFunction(new MyObjectiveFunction(embeddings));
+                ObjectiveFunctionGradient OFG = new ObjectiveFunctionGradient(GF);
+                GoalType GT = GoalType.MAXIMIZE;
+                PointValuePair PVP = NLCGO.optimize(OFG, GT, new InitialGuess(initialweights));
+                
+                double[] weights = PVP.getPoint();
                 
                 for (final String word : embeddings.keySet()) {
                     float[] contexts = embeddings.get(word);
@@ -384,10 +402,10 @@ public class WordSimTester {
         return new Pair<HashMap<String, float[]>, Integer>(embeddingMatrix, contextSize);
     }
 
-    public static class ObjectiveFunction {
+    public static class MyObjectiveFunction implements MultivariateDifferentiableFunction {
         HashMap<String, float[]> D;
         
-        public double objective(double[] weights) {
+        public double value(double[] weights) {
             double sum = 0.0;
             
             for (final String word : D.keySet()) {
@@ -404,7 +422,24 @@ public class WordSimTester {
             return sum;
         }
         
-        public ObjectiveFunction(HashMap<String, float[]> D) {
+        public DerivativeStructure value(DerivativeStructure[] weights) {
+            double sum = 0.0;
+            
+            for (final String word : D.keySet()) {
+                float[] contexts = D.get(word);
+                for (int c = 0; c < contexts.length; c++) {
+                    if (contexts[c] > 0.0) {
+                        sum += Math.log(1.0 / (1.0 + Math.exp(contexts[c] * weights[c].getValue())));
+                    } else {
+                        sum += Math.log(1.0 / (1.0 + Math.exp(-weights[c].getValue())));
+                    }
+                }
+            }
+            
+            return new DerivativeStructure(0, 0, sum);
+        }
+        
+        public MyObjectiveFunction(HashMap<String, float[]> D) {
             this.D = D;
         }
     }
