@@ -68,7 +68,7 @@ public class WordSimTester {
 			}
             
             int embeddingSize = 0;
-            if (argMap.containsKey("-baseline") || (argMap.containsKey("-baseline2"))) {
+            if (argMap.containsKey("-baseline") || argMap.containsKey("-baseline1") || argMap.containsKey("-baseline2")) {
 
                 // Since this simple approach does not do dimensionality reduction
                 // on the co-occurrence vectors, we instead control the size of the
@@ -76,7 +76,7 @@ public class WordSimTester {
                 String wordNetPath = "";
                 if (!argMap.containsKey("-wordnetdata")) {
                     System.out.println(
-                            "-wordnetdata flag required with -baseline or -baseline2");
+                            "-wordnetdata flag required with -baseline/-baseline1/-baseline2");
                     System.exit(0);
                 } else {
                     wordNetPath = argMap.get("-wordnetdata");
@@ -89,9 +89,14 @@ public class WordSimTester {
                     embeddings = getEmbeddings(dataPath, contentWordVocab, targetVocab);
                     embeddingSize = contentWordVocab.size();
                 }
+                else if (argMap.containsKey("-baseline1")) {
+                    System.out.println("Training embeddings on " + dataPath + " with baseline1...");
+                    embeddings = getEmbeddingsD(dataPath, contentWordVocab, targetVocab, true);
+                    embeddingSize = contentWordVocab.size();
+                }
                 else {
                     System.out.println("Training embeddings on " + dataPath + " with baseline2...");
-                    embeddings = getEmbeddings2(dataPath, contentWordVocab, targetVocab);
+                    embeddings = getEmbeddingsD(dataPath, contentWordVocab, targetVocab, false);
                     embeddingSize = contentWordVocab.size();
                 }
             }
@@ -216,8 +221,8 @@ public class WordSimTester {
      * @param embedding_map
      * @return
      */
-    private static HashMap<String, float[]> getEmbeddings2(String dataPath,
-                                                          HashMap<String, Integer> contentVocab, Set<String> targetVocab) {
+    private static HashMap<String, float[]> getEmbeddingsD(String dataPath,
+                                                          HashMap<String, Integer> contentVocab, Set<String> targetVocab, boolean firstScore) {
         
         final HashMap<String, float[]> embeddingMatrix = new HashMap<String, float[]>();
         for (final String target_word : targetVocab) {
@@ -236,8 +241,12 @@ public class WordSimTester {
                         final String wordj = sentence.get(j);
                         if (contentVocab.containsKey(wordj)) {
                             final int contentWordId = contentVocab.get(wordj);
-                            //final float score = (float) ((len - Math.abs(i - j) + 0.0) / len);
-                            final float score = (float) (1.0 / (Math.abs(i - j) + 1.0));
+                            final float score;
+                            if (firstScore) {
+                                score = (float) ((len - Math.abs(i - j) + 0.0) / len);
+                            } else {
+                                score = (float) (1.0 / (Math.abs(i - j) + 1.0));
+                            }
                             embeddingMatrix.get(wordi)[contentWordId]
                             = embeddingMatrix.get(wordi)[contentWordId] + score;
                         }
