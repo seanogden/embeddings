@@ -66,48 +66,66 @@ public class WordSimTester {
 			} else {
 				dataPath = argMap.get("-trainingdata");
 			}
+
+            // Since this simple approach does not do dimensionality reduction
+            // on the co-occurrence vectors, we instead control the size of the
+            // vectors by only counting co-occurrence with core WordNet senses.
+            String wordNetPath = "";
+            if (!argMap.containsKey("-wordnetdata")) {
+                System.out.println(
+                        "-wordnetdata flag required with -trainandeval");
+                System.exit(0);
+            } else {
+                wordNetPath = argMap.get("-wordnetdata");
+            }
+            final HashMap<String, Integer> contentWordVocab = getWordNetVocab(
+                    wordNetPath);
             
             int embeddingSize = 0;
-            if (argMap.containsKey("-baseline") || argMap.containsKey("-baseline1") || argMap.containsKey("-baseline2") || argMap.containsKey("-baselinedep")) {
-
-                // Since this simple approach does not do dimensionality reduction
-                // on the co-occurrence vectors, we instead control the size of the
-                // vectors by only counting co-occurrence with core WordNet senses.
-                String wordNetPath = "";
-                if (!argMap.containsKey("-wordnetdata")) {
-                    System.out.println(
-                            "-wordnetdata flag required with -baseline/-baseline1/-baseline2/-baselinedep");
-                    System.exit(0);
-                } else {
-                    wordNetPath = argMap.get("-wordnetdata");
-                }
-                final HashMap<String, Integer> contentWordVocab = getWordNetVocab(
-                        wordNetPath);
-                
-                if (argMap.containsKey("-baseline")) {
-                    System.out.println("Training embeddings on " + dataPath + " with baseline...");
-                    embeddings = getEmbeddings(dataPath, contentWordVocab, targetVocab);
-                    embeddingSize = contentWordVocab.size();
-                } else if (argMap.containsKey("-baseline1")) {
-                    System.out.println("Training embeddings on " + dataPath + " with baseline1...");
-                    embeddings = getEmbeddingsD(dataPath, contentWordVocab, targetVocab, true);
-                    embeddingSize = contentWordVocab.size();
-                } else if (argMap.containsKey("-baseline2")) {
-                    System.out.println("Training embeddings on " + dataPath + " with baseline2...");
-                    embeddings = getEmbeddingsD(dataPath, contentWordVocab, targetVocab, false);
-                    embeddingSize = contentWordVocab.size();
-                } else {
-                    System.out.println("Training embeddings on " + dataPath + " with baselinedep...");
-                    Pair<HashMap<String, float[]>, Integer> pair = getDepEmbeddings(dataPath, contentWordVocab, targetVocab);
-                    embeddings = pair.getFirst();
-                    embeddingSize = pair.getSecond();
-                }
-            }
-            else {
-                System.out.println("Training embeddings on " + dataPath + " with dep...");
+            
+            if (argMap.containsKey("-baseline")) {
+                System.out.println("Training embeddings on " + dataPath + " with baseline...");
+                embeddings = getEmbeddings(dataPath, contentWordVocab, targetVocab);
+                embeddingSize = contentWordVocab.size();
+            } else if (argMap.containsKey("-baseline1")) {
+                System.out.println("Training embeddings on " + dataPath + " with baseline1...");
+                embeddings = getEmbeddingsD(dataPath, contentWordVocab, targetVocab, true);
+                embeddingSize = contentWordVocab.size();
+            } else if (argMap.containsKey("-baseline2")) {
+                System.out.println("Training embeddings on " + dataPath + " with baseline2...");
+                embeddings = getEmbeddingsD(dataPath, contentWordVocab, targetVocab, false);
+                embeddingSize = contentWordVocab.size();
+            } else if (argMap.containsKey("-deponly")) {
+                System.out.println("Training embeddings on " + dataPath + " with deponly...");
                 Pair<HashMap<String, float[]>, Integer> pair = getDepEmbeddings(dataPath, null, targetVocab);
                 embeddings = pair.getFirst();
                 embeddingSize = pair.getSecond();
+            } else if (argMap.containsKey("-dep")) {
+                System.out.println("Training embeddings on " + dataPath + " with dep...");
+                Pair<HashMap<String, float[]>, Integer> pair = getDepEmbeddings(dataPath, contentWordVocab, targetVocab);
+                embeddings = pair.getFirst();
+                embeddingSize = pair.getSecond();
+            } else {
+                System.out.println("Training embeddings on " + dataPath + " with skip-gram...");
+                Pair<HashMap<String, float[]>, Integer> pair = getDepEmbeddings(dataPath, contentWordVocab, targetVocab);
+                embeddings = pair.getFirst();
+                embeddingSize = pair.getSecond();
+                
+                ObjectiveFunction objfun = new ObjectiveFunction(embeddings);
+                double[] initialweights = new double[embeddingSize];
+                for (int i = 0; i < embeddingSize; i++) {
+                    initialweights[i] = 1.0;
+                }
+                
+                // MAXIMIZE
+                double[] weights = initialweights;
+                
+                for (final String word : embeddings.keySet()) {
+                    float[] contexts = embeddings.get(word);
+                    for (int i = 0; i < embeddingSize; i++) {
+                        contexts[i] = contexts[i] * (float) weights[i];
+                    }
+                }
             }
 
 			// Keep only the words that are needed.
@@ -364,6 +382,31 @@ public class WordSimTester {
         }
         
         return new Pair<HashMap<String, float[]>, Integer>(embeddingMatrix, contextSize);
+    }
+
+    public static class ObjectiveFunction {
+        HashMap<String, float[]> D;
+        
+        public double objective(double[] weights) {
+            double sum = 0.0;
+            
+            for (final String word : D.keySet()) {
+                float[] contexts = D.get(word);
+                for (int c = 0; c < contexts.length; c++) {
+                    if (contexts[c] > 0.0) {
+                        sum += Math.log(1.0 / (1.0 + Math.exp(contexts[c] * weights[c])));
+                    } else {
+                        sum += Math.log(1.0 / (1.0 + Math.exp(-weights[c])));
+                    }
+                }
+            }
+            
+            return sum;
+        }
+        
+        public ObjectiveFunction(HashMap<String, float[]> D) {
+            this.D = D;
+        }
     }
 
 	/**
