@@ -21,8 +21,6 @@
 			<classpath refid="classpath" />
 			<compilerarg value="-Xlint"/>
 			<compilerarg value="-Xlint:-serial"/>
-			<compilerarg value="-Xlint:-auxiliaryclass"/>
-			<compilerarg value="-Xlint:-overloads"/>
 		</javac>
 	</target>
 
