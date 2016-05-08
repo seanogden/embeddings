@@ -83,6 +83,11 @@ public class WordSimTester {
             final HashMap<String, Integer> contentWordVocab = getWordNetVocab(
                     wordNetPath);
             
+            String pairsPath = null;
+            if (argMap.containsKey("-pairs")) {
+                pairsPath = argMap.get("-pairs");
+            }
+            
             int embeddingSize = 0;
             
             if (argMap.containsKey("-baseline")) {
@@ -99,37 +104,54 @@ public class WordSimTester {
                 embeddingSize = contentWordVocab.size();
             } else if (argMap.containsKey("-deponly")) {
                 System.out.println("Training embeddings on " + dataPath + " with deponly...");
-                Pair<HashMap<String, float[]>, Integer> pair = getDepEmbeddings(dataPath, null, targetVocab);
+                Pair<HashMap<String, float[]>, Integer> pair = getDepEmbeddings(dataPath, null, targetVocab, pairsPath);
                 embeddings = pair.getFirst();
                 embeddingSize = pair.getSecond();
             } else if (argMap.containsKey("-dep")) {
                 System.out.println("Training embeddings on " + dataPath + " with dep...");
-                Pair<HashMap<String, float[]>, Integer> pair = getDepEmbeddings(dataPath, contentWordVocab, targetVocab);
+                Pair<HashMap<String, float[]>, Integer> pair = getDepEmbeddings(dataPath, contentWordVocab, targetVocab, pairsPath);
                 embeddings = pair.getFirst();
                 embeddingSize = pair.getSecond();
-            } else {
+            } else if (argMap.containsKey("-skipgram")) {
                 System.out.println("Training embeddings on " + dataPath + " with skip-gram...");
-                Pair<HashMap<String, float[]>, Integer> pair = getDepEmbeddings(dataPath, contentWordVocab, targetVocab);
-                embeddings = pair.getFirst();
-                embeddingSize = pair.getSecond();
+                Pair<HashMap<String, float[]>, Integer> pair = getDepEmbeddings(dataPath, contentWordVocab, targetVocab, pairsPath);
+                HashMap<String, float[]> wordContexts = pair.getFirst();
+                ArrayList<String> words = new ArrayList<String>(targetVocab);
+                int wordSize = words.size();
+                int contextSize = pair.getSecond();
                 
-                MyObjectiveFunction myobjfun = new MyObjectiveFunction(embeddings, embeddingSize);
+                float[][] D = new float[wordSize][contextSize];
+                for (int i = 0; i < D.length; i++) {
+                    D[i] = wordContexts.get(words.get(i));
+                }
                 
-                double[] initialweights = new double[embeddingSize];
-                for (int i = 0; i < embeddingSize; i++) {
-                    initialweights[i] = 1.0;
+                embeddingSize = 10;
+                
+                MyObjectiveFunction myobjfun = new MyObjectiveFunction(D, wordSize, contextSize, embeddingSize);
+                int dimension = myobjfun.dimension();
+                //System.out.println("dimension = " + dimension);
+                
+                double[] initialweights = new double[dimension];
+                for (int k = 0; k < dimension; k++) {
+                    initialweights[k] = 0.0; //Math.random();
                 }
                 
                 LBFGSMinimizer minimizer = new LBFGSMinimizer(50);
+                double[] weights = minimizer.minimize(myobjfun, initialweights, 1000.0);
                 
-                double[] weights = minimizer.minimize(myobjfun, initialweights, 1.0);
-                
-                for (final String word : embeddings.keySet()) {
-                    float[] contexts = embeddings.get(word);
-                    for (int i = 0; i < embeddingSize; i++) {
-                        contexts[i] = contexts[i] * (float) weights[i];
+                embeddings = new HashMap<String, float[]>();
+                for (int i = 0; i < wordSize; i++) {
+                    float[] embedding = new float[embeddingSize];
+                    int offset = i * embeddingSize;
+                    for (int j = 0; j < embeddingSize; j++) {
+                        embedding[j] = (float) weights[j + offset];
                     }
+                    embeddings.put(words.get(i), embedding);
                 }
+            } else {
+                System.out.println("model flag required with -trainandeval : -baseline|-baseline1|baseline2|-deponly|-dep|-skipgram");
+                System.exit(0);
+                embeddings = null;
             }
 
 			// Keep only the words that are needed.
@@ -293,7 +315,13 @@ public class WordSimTester {
      */
     private static Pair<HashMap<String, float[]>, Integer> getDepEmbeddings(String dataPath,
                                                                             HashMap<String, Integer> contentVocab,
-                                                                            Set<String> targetVocab) {
+                                                                            Set<String> targetVocab,
+                                                                            String pairsPath) throws Exception {
+        
+        BufferedWriter writer = null;
+        if (pairsPath != null) {
+            writer = new BufferedWriter(new FileWriter(pairsPath));
+        }
         
         final ArrayList<String> targetVocabList = new ArrayList<String>(targetVocab);
         final int targetVocabSize = targetVocabList.size();
@@ -332,41 +360,66 @@ public class WordSimTester {
                     //wordContexts.add(contextIds.get(parent));
                     //wordContexts.add(contextIds.get(conlli.rel + "-1"));
                     wordContexts.add(contextIds.get(parent + "/" + conlli.rel + "-1"));
+                    if (writer != null) {
+                        writer.write(conlli.word + " " + parent + "/" + conlli.rel + "-1" + "\n");
+                    }
                     
                     // add children contexts
                     final HashMap<Integer, String> grandchildren = new HashMap<Integer, String>();
                     for (final Conll conllj : conlls) {
                         if (conllj.head == conlli.index) {
-                            if (conllj.rel == "prep") {
+                            if (conllj.rel.equals("prep")) {
                                 grandchildren.put(conllj.index, "prep_" + conllj.word);
                             }
                             else {
                                 //wordContexts.add(contextIds.get(conllj.word));
                                 //wordContexts.add(contextIds.get(conllj.rel));
                                 wordContexts.add(contextIds.get(conllj.word + "/" + conllj.rel));
+                                if (writer != null) {
+                                    writer.write(conlli.word + " " + conllj.word + "/" + conllj.rel + "\n");
+                                }
                             }
                         }
                     }
                     
                     // add grandchildren contexts
                     for (final Conll conllj : conlls) {
-                        if (conllj.rel == "pobj") {
-                            String new_rel = grandchildren.remove(conllj.head);
+                        if (conllj.rel.equals("pobj")) {
+                            String new_rel = grandchildren.get(conllj.head);
                             //wordContexts.add(contextIds.get(conllj.word));
                             //wordContexts.add(contextIds.get(new_rel));
-                            wordContexts.add(contextIds.get(conllj.word + "/" + new_rel));
+                            //if (new_rel != null) {
+                                wordContexts.add(contextIds.get(conllj.word + "/" + new_rel));
+                                if (writer != null) {
+                                    writer.write(conlli.word + " " + conllj.word + "/" + new_rel + "\n");
+                                }
+                            //}
                         }
                     }
-                    assert grandchildren.isEmpty();
                     
                     // add co-occurences
                     if (contentVocab != null) {
                         for (final String word : sentenceWords) {
                             wordContexts.add(contextIds.get(word));
+                            if (writer != null) {
+                                writer.write(conlli.word + " " + word + "\n");
+                            }
                         }
                     }
+                    
+//                    // add part-of-speech
+//                    wordContexts.add(contextIds.get("POS-" + conlli.cpos));
+//                    wordContexts.add(contextIds.get("POS-" + conlli.fpos));
+//                    if (writer != null) {
+//                        writer.write(conlli.word + " POS-" + conlli.cpos + "\n");
+//                        writer.write(conlli.word + " POS-" + conlli.fpos + "\n");
+//                    }
                 }
             }
+        }
+        
+        if (writer != null) {
+            writer.close();
         }
         
         final int contextSize = contextIds.size();
@@ -389,15 +442,18 @@ public class WordSimTester {
     }
 
     public static class MyObjectiveFunction implements DifferentiableFunction {
-        HashMap<String, float[]> D;
-        int d;
+        float[][] D;
+        int wordSize;
+        int contextSize;
+        int embeddingSize;
+        int dimension;
         
         double lastValue;
         double[] lastDerivative;
         double[] lastX;
         
         public int dimension() {
-            return d;
+            return dimension;
         }
         
         public double valueAt(double[] x) {
@@ -431,19 +487,42 @@ public class WordSimTester {
         
         private Pair<Double, double[]> calculate(double[] weights) {
             double objective = 0.0;
-            double[] derivatives = new double[d];
+            double[] derivatives = new double[dimension];
             
-            for (final String word : D.keySet()) {
-                float[] contexts = D.get(word);
-                for (int c = 0; c < d; c++) {
-                    if (contexts[c] > 0.0) {
-                        double e = Math.exp(-contexts[c] * weights[c]);
+            for (int i = 0; i < wordSize; i++) {
+                int wordOffset = i * embeddingSize;
+                
+                for (int j = 0; j < contextSize; j++) {
+                    int contextOffset = (wordSize + j) * embeddingSize;
+                    
+                    double dot_prod = 0.0;
+                    for (int k = 0; k < embeddingSize; k++) {
+                        dot_prod += weights[wordOffset + k] * weights[contextOffset + k];
+                    }
+                    
+                    if (D[i][j] > 0.0) {
+                        // makes derivative negative
+                        double e = Math.exp(-dot_prod);
+                        
+                        // negative because this function is minimized (we want max)
                         objective -= Math.log(1.0 / (1.0 + e));
-                        derivatives[c] -= contexts[c] * e / (1.0 + e);
+                        
+                        for (int k = 0; k < embeddingSize; k++) {
+                            // positive because this function is minimized (we want max) and derivative is negative
+                            derivatives[wordOffset + k] += (e * weights[contextOffset + k]) / (1.0 + e);
+                            derivatives[contextOffset + k] += (e * weights[wordOffset + k]) / (1.0 + e);
+                        }
                     } else {
-                        double e = Math.exp(weights[c]);
+                        double e = Math.exp(dot_prod);
+                        
+                        // negative because this function is minimized (we want max)
                         objective -= Math.log(1.0 / (1.0 + e));
-                        derivatives[c] += e / (1.0 + e);
+                        
+                        for (int k = 0; k < embeddingSize; k++) {
+                            // negative because this function is minimized (we want max)
+                            derivatives[wordOffset + k] -= (e * weights[contextOffset + k]) / (1.0 + e);
+                            derivatives[contextOffset + k] -= (e * weights[wordOffset + k]) / (1.0 + e);
+                        }
                     }
                 }
             }
@@ -451,9 +530,12 @@ public class WordSimTester {
             return new Pair<Double, double[]>(objective, derivatives);
         }
         
-        public MyObjectiveFunction(HashMap<String, float[]> D, int d) {
+        public MyObjectiveFunction(float[][] D, int wordSize, int contextSize, int embeddingSize) {
             this.D = D;
-            this.d = d;
+            this.wordSize = wordSize;
+            this.contextSize = contextSize;
+            this.embeddingSize = embeddingSize;
+            this.dimension = (wordSize + contextSize) * embeddingSize;
         }
     }
 
