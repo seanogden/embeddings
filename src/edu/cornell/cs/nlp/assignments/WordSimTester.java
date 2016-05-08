@@ -18,20 +18,11 @@ import org.apache.commons.math3.stat.correlation.SpearmansCorrelation;
 import org.apache.commons.math3.stat.ranking.NaNStrategy;
 import org.apache.commons.math3.stat.ranking.NaturalRanking;
 
-import org.apache.commons.math3.optim.nonlinear.scalar.gradient.NonLinearConjugateGradientOptimizer;
-import org.apache.commons.math3.optim.nonlinear.scalar.gradient.NonLinearConjugateGradientOptimizer.Formula;
-import org.apache.commons.math3.optim.SimpleValueChecker;
-import org.apache.commons.math3.optim.PointValuePair;
-import org.apache.commons.math3.analysis.differentiation.DerivativeStructure;
-import org.apache.commons.math3.analysis.differentiation.MultivariateDifferentiableFunction;
-import org.apache.commons.math3.analysis.differentiation.GradientFunction;
-import org.apache.commons.math3.optim.nonlinear.scalar.ObjectiveFunctionGradient;
-import org.apache.commons.math3.optim.nonlinear.scalar.GoalType;
-import org.apache.commons.math3.optim.InitialGuess;
-
 import edu.cornell.cs.nlp.assignments.util.CommandLineUtils;
 import edu.cornell.cs.nlp.assignments.util.HashId;
 import edu.cornell.cs.nlp.assignments.util.Pair;
+
+import nlp.math.*;
 
 public class WordSimTester {
 
@@ -122,21 +113,16 @@ public class WordSimTester {
                 embeddings = pair.getFirst();
                 embeddingSize = pair.getSecond();
                 
+                MyObjectiveFunction myobjfun = new MyObjectiveFunction(embeddings, embeddingSize);
+                
                 double[] initialweights = new double[embeddingSize];
                 for (int i = 0; i < embeddingSize; i++) {
                     initialweights[i] = 1.0;
                 }
                 
-                // MAXIMIZE
-                NonLinearConjugateGradientOptimizer.Formula F = NonLinearConjugateGradientOptimizer.Formula.FLETCHER_REEVES;
-                SimpleValueChecker SVC = new SimpleValueChecker(0.1, -0.1);
-                NonLinearConjugateGradientOptimizer NLCGO = new NonLinearConjugateGradientOptimizer(F, SVC);
-                GradientFunction GF = new GradientFunction(new MyObjectiveFunction(embeddings));
-                ObjectiveFunctionGradient OFG = new ObjectiveFunctionGradient(GF);
-                GoalType GT = GoalType.MAXIMIZE;
-                PointValuePair PVP = NLCGO.optimize(OFG, GT, new InitialGuess(initialweights));
+                LBFGSMinimizer minimizer = new LBFGSMinimizer(50);
                 
-                double[] weights = PVP.getPoint();
+                double[] weights = minimizer.minimize(myobjfun, initialweights, 1.0);
                 
                 for (final String word : embeddings.keySet()) {
                     float[] contexts = embeddings.get(word);
@@ -402,45 +388,72 @@ public class WordSimTester {
         return new Pair<HashMap<String, float[]>, Integer>(embeddingMatrix, contextSize);
     }
 
-    public static class MyObjectiveFunction implements MultivariateDifferentiableFunction {
+    public static class MyObjectiveFunction implements DifferentiableFunction {
         HashMap<String, float[]> D;
+        int d;
         
-        public double value(double[] weights) {
-            double sum = 0.0;
+        double lastValue;
+        double[] lastDerivative;
+        double[] lastX;
+        
+        public int dimension() {
+            return d;
+        }
+        
+        public double valueAt(double[] x) {
+            ensureCache(x);
+            return lastValue;
+        }
+        
+        public double[] derivativeAt(double[] x) {
+            ensureCache(x);
+            return lastDerivative;
+        }
+        
+        private void ensureCache(double[] x) {
+            if (requiresUpdate(lastX, x)) {
+                Pair<Double, double[]> currentValueAndDerivative = calculate(x);
+                lastValue = currentValueAndDerivative.getFirst();
+                lastDerivative = currentValueAndDerivative.getSecond();
+                lastX = x;
+            }
+        }
+        
+        private boolean requiresUpdate(double[] lastX, double[] x) {
+            if (lastX == null)
+                return true;
+            for (int i = 0; i < x.length; i++) {
+                if (lastX[i] != x[i])
+                    return true;
+            }
+            return false;
+        }
+        
+        private Pair<Double, double[]> calculate(double[] weights) {
+            double objective = 0.0;
+            double[] derivatives = new double[d];
             
             for (final String word : D.keySet()) {
                 float[] contexts = D.get(word);
-                for (int c = 0; c < contexts.length; c++) {
+                for (int c = 0; c < d; c++) {
                     if (contexts[c] > 0.0) {
-                        sum += Math.log(1.0 / (1.0 + Math.exp(contexts[c] * weights[c])));
+                        double e = Math.exp(-contexts[c] * weights[c]);
+                        objective -= Math.log(1.0 / (1.0 + e));
+                        derivatives[c] -= contexts[c] * e / (1.0 + e);
                     } else {
-                        sum += Math.log(1.0 / (1.0 + Math.exp(-weights[c])));
+                        double e = Math.exp(weights[c]);
+                        objective -= Math.log(1.0 / (1.0 + e));
+                        derivatives[c] += e / (1.0 + e);
                     }
                 }
             }
             
-            return sum;
+            return new Pair<Double, double[]>(objective, derivatives);
         }
         
-        public DerivativeStructure value(DerivativeStructure[] weights) {
-            double sum = 0.0;
-            
-            for (final String word : D.keySet()) {
-                float[] contexts = D.get(word);
-                for (int c = 0; c < contexts.length; c++) {
-                    if (contexts[c] > 0.0) {
-                        sum += Math.log(1.0 / (1.0 + Math.exp(contexts[c] * weights[c].getValue())));
-                    } else {
-                        sum += Math.log(1.0 / (1.0 + Math.exp(-weights[c].getValue())));
-                    }
-                }
-            }
-            
-            return new DerivativeStructure(0, 0, sum);
-        }
-        
-        public MyObjectiveFunction(HashMap<String, float[]> D) {
+        public MyObjectiveFunction(HashMap<String, float[]> D, int d) {
             this.D = D;
+            this.d = d;
         }
     }
 
