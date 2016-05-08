@@ -125,7 +125,7 @@ public class WordSimTester {
                     D[i] = wordContexts.get(words.get(i));
                 }
                 
-                embeddingSize = 10;
+                embeddingSize = 50;
                 
                 MyObjectiveFunction myobjfun = new MyObjectiveFunction(D, wordSize, contextSize, embeddingSize);
                 int dimension = myobjfun.dimension();
@@ -133,11 +133,11 @@ public class WordSimTester {
                 
                 double[] initialweights = new double[dimension];
                 for (int k = 0; k < dimension; k++) {
-                    initialweights[k] = 0.0; //Math.random();
+                    initialweights[k] = Math.random();
                 }
                 
                 LBFGSMinimizer minimizer = new LBFGSMinimizer(50);
-                double[] weights = minimizer.minimize(myobjfun, initialweights, 1000.0);
+                double[] weights = minimizer.minimize(myobjfun, initialweights, 0.1);
                 
                 embeddings = new HashMap<String, float[]>();
                 for (int i = 0; i < wordSize; i++) {
@@ -501,27 +501,26 @@ public class WordSimTester {
                     }
                     
                     if (D[i][j] > 0.0) {
-                        // makes derivative negative
                         double e = Math.exp(-dot_prod);
                         
-                        // negative because this function is minimized (we want max)
+                        // subtract because this function is minimized (we want max)
                         objective -= Math.log(1.0 / (1.0 + e));
                         
                         for (int k = 0; k < embeddingSize; k++) {
-                            // positive because this function is minimized (we want max) and derivative is negative
-                            derivatives[wordOffset + k] += (e * weights[contextOffset + k]) / (1.0 + e);
-                            derivatives[contextOffset + k] += (e * weights[wordOffset + k]) / (1.0 + e);
+                            // subtract because this function is minimized (we want max)
+                            derivatives[wordOffset + k] -= (e * weights[contextOffset + k]) / (1.0 + e);
+                            derivatives[contextOffset + k] -= (e * weights[wordOffset + k]) / (1.0 + e);
                         }
                     } else {
                         double e = Math.exp(dot_prod);
                         
-                        // negative because this function is minimized (we want max)
+                        // subtract because this function is minimized (we want max)
                         objective -= Math.log(1.0 / (1.0 + e));
                         
                         for (int k = 0; k < embeddingSize; k++) {
-                            // negative because this function is minimized (we want max)
-                            derivatives[wordOffset + k] -= (e * weights[contextOffset + k]) / (1.0 + e);
-                            derivatives[contextOffset + k] -= (e * weights[wordOffset + k]) / (1.0 + e);
+                            // add because this function is minimized (we want max) and derivative is negative
+                            derivatives[wordOffset + k] += (e * weights[contextOffset + k]) / (1.0 + e);
+                            derivatives[contextOffset + k] += (e * weights[wordOffset + k]) / (1.0 + e);
                         }
                     }
                 }
